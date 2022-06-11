@@ -32,18 +32,11 @@ conf = SparkConf()
 username = 'an_en'
 password = 'QjFvQaAt'
 
-spark = SparkSession \
-    .builder \
-    .appName("postgresql") \
-    .config("spark.driver.extraClassPath", sparkClassPath) \
-    .getOrCreate()
+spark = SparkSession     .builder     .appName("postgresql")     .config("spark.driver.extraClassPath", sparkClassPath)     .getOrCreate()
 print('SparkSession started')
 
 print('load clients table...')
-cl = spark.read\
-    .format("org.apache.spark.sql.cassandra")\
-    .options(table='clients', keyspace='labdata')\
-    .load()
+cl = spark.read    .format("org.apache.spark.sql.cassandra")    .options(table='clients', keyspace='labdata')    .load()
 
 cl_ = cl.select("uid", 
                 "gender", 
@@ -54,34 +47,17 @@ cl_ = cl.select("uid",
                         ELSE '>=55' END AS age_cat"))
 
 print('load domain_cats table...')
-cats = spark.read \
-    .format("jdbc") \
-    .option("url", "jdbc:postgresql://10.0.0.31:5432/labdata") \
-    .option("dbtable", "domain_cats") \
-    .option("user", username) \
-    .option("password", password) \
-    .option("driver", "org.postgresql.Driver") \
-    .load()
+cats = spark.read     .format("jdbc")     .option("url", "jdbc:postgresql://10.0.0.31:5432/labdata")     .option("dbtable", "domain_cats")     .option("user", username)     .option("password", password)     .option("driver", "org.postgresql.Driver")     .load()
 
 cats_ = cats.withColumn('category', F.concat(F.lit('web_'), F.col('category')))
 
 print('load visits table...')
-visits = spark.read\
-    .format("org.elasticsearch.spark.sql")\
-    .option("es.nodes","10.0.0.31")\
-    .option("es.port","9200")\
-    .option("user", username) \
-    .option("password", password) \
-    .load("visits")
+visits = spark.read    .format("org.elasticsearch.spark.sql")    .option("es.nodes","10.0.0.31")    .option("es.port","9200")    .option("user", username)     .option("password", password)     .load("visits")
 
-visits_ = visits\
-    .where("uid is not null")\
-    .groupBy(["uid", "category"])\
-    .count()\
-    .withColumn('category', F.concat(F.lit('shop_'), 
+visits_ = visits    .where("uid is not null")    .groupBy(["uid", "category"])    .count()    .withColumn('category', F.concat(F.lit('shop_'), 
                                      F.regexp_replace(F.regexp_replace(F.lower(F.col('category')), 
                                                                        '-', '_'), 
-                                                      ' ', '_')))\
+                                                      ' ', '_')))
 
 visits_pivot = visits_\
     .groupBy("uid")\
@@ -103,27 +79,13 @@ web_df = spark.createDataFrame(web, schema=schema)
 my_udf = F.udf(lambda webs: [(web.split('/')[2].replace("www.", "")) for web in webs], 
                ArrayType(StringType()))
 
-web_df_ = web_df\
-    .withColumn("domains", my_udf(F.col('visits')))\
-    .withColumn("domain", F.explode(F.col('domains')))\
-    .select('uid', 'domain')
+web_df_ = web_df    .withColumn("domains", my_udf(F.col('visits')))    .withColumn("domain", F.explode(F.col('domains')))    .select('uid', 'domain')
 
-web_df_ = web_df_.join(cats_, cats_.domain == web_df_.domain, 'inner')\
-            .groupBy(["uid", "category"])\
-            .count()
+web_df_ = web_df_.join(cats_, cats_.domain == web_df_.domain, 'inner')            .groupBy(["uid", "category"])            .count()
 
-web_pivot = web_df_\
-    .groupBy("uid")\
-    .pivot("category")\
-    .agg(F.sum("count"))\
-    .na.fill(value=0)
+web_pivot = web_df_    .groupBy("uid")    .pivot("category")    .agg(F.sum("count"))    .na.fill(value=0)
 
-res = cl_\
-    .join(visits_pivot, cl.uid == visits_pivot.uid, 'left')\
-    .join(web_pivot, cl.uid == web_pivot.uid, 'left')\
-    .na.fill(value=0)\
-    .drop(visits_pivot.uid)\
-    .drop(web_pivot.uid)
+res = cl_    .join(visits_pivot, cl.uid == visits_pivot.uid, 'inner')    .join(web_pivot, cl.uid == web_pivot.uid, 'inner')    .drop(visits_pivot.uid)    .drop(web_pivot.uid)
 
 print('starting to compute...')
 res.write    .format("jdbc")    .option("url", "jdbc:postgresql://10.0.0.31:5432/an_en")    .option("dbtable", "clients")    .option("user", username)    .option("password", password)    .option("driver", "org.postgresql.Driver")    .save()
